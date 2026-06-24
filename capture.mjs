@@ -69,7 +69,7 @@ if (!URL || args.help) {
   --aspect <W:H>      aspect ratio, e.g. 16:9 (height derived from width)
   --width / --height  explicit viewport dimensions
   --scale <n>         device scale factor / DPI multiplier (default 2)`);
-  process.exit(URL ? 0 : 1);
+  process.exit(args.help ? 0 : 1); // --help is success; missing --url is an error
 }
 
 // ---------------------------------------------------------------------------
