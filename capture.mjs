@@ -73,7 +73,7 @@ if (!URL || args.help) {
 }
 
 // ---------------------------------------------------------------------------
-// browser: prefer a system Chrome/Chromium, else a Playwright-managed channel
+// browser: prefer a system Chrome/Chromium, else Playwright-managed Chromium
 // ---------------------------------------------------------------------------
 function launchOptions() {
   const o = { args: ['--no-sandbox'] };
@@ -85,7 +85,7 @@ function launchOptions() {
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   ].filter(Boolean);
   const found = candidates.find((p) => existsSync(p));
-  if (found) o.executablePath = found; else o.channel = 'chrome';
+  if (found) o.executablePath = found;
   return o;
 }
 
