@@ -4,20 +4,23 @@
   "description": "Capture themed (dark/light) screenshots of the Nokia EDA (Event Driven Automation) web UI.",
   "type": "module",
   "bin": {
-    "edascr": "./capture.mjs",
-    "eda-screenshotter": "./capture.mjs"
+    "edascr": "./dist/capture.js",
+    "eda-screenshotter": "./dist/capture.js"
   },
-  "main": "capture.mjs",
+  "main": "dist/capture.js",
+  "types": "dist/capture.d.ts",
   "files": [
-    "capture.mjs",
+    "dist",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "capture": "node capture.mjs",
-    "start": "node capture.mjs",
-    "help": "node capture.mjs --help",
-    "check": "node --check capture.mjs",
+    "build": "tsc",
+    "capture": "pnpm run build && node dist/capture.js",
+    "start": "pnpm run capture",
+    "help": "pnpm run build && node dist/capture.js --help",
+    "check": "tsc --noEmit",
+    "prepare": "pnpm run build",
     "install-browser": "playwright-core install chromium"
   },
   "keywords": [
@@ -44,5 +47,9 @@
   "packageManager": "pnpm@11.3.0",
   "dependencies": {
     "playwright-core": "^1.60.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^6.0.3"
   }
 }
