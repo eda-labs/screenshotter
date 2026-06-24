@@ -29,6 +29,7 @@ Requires **Node 18+** and **[pnpm](https://pnpm.io/)**.
 git clone https://github.com/eda-labs/screenshotter.git
 cd screenshotter
 pnpm install
+pnpm run build
 ```
 
 You also need a **Chrome/Chromium** binary. The tool auto-detects a system
@@ -44,7 +45,8 @@ pnpm run install-browser   # downloads a Chromium for playwright-core
 From a local clone, register the command globally:
 
 ```bash
-pnpm link --global
+pnpm run build
+pnpm add --global .
 edascr capture --url https://my-eda.example.ts.net
 ```
 
@@ -70,9 +72,10 @@ edascr capture --url https://my-eda --aspect 16:9 \
   --page /ui/app/main/interfaces.eda.nokia.com/v1alpha1/interfaces,/ui/app/main/core.eda.nokia.com/v1/toponodes
 ```
 
-In a clone you can equivalently run `node capture.mjs ...`. Installed as a
-package (`pnpm add -g @eda-labs/screenshotter`, or via `npx`/`pnpm dlx`), it
-exposes `edascr` and `eda-screenshotter` commands.
+In a clone you can equivalently run `pnpm capture --url ...`, which builds the
+TypeScript source before running `node dist/capture.js`. Installed as a package
+(`pnpm add -g @eda-labs/screenshotter`, or via `npx`/`pnpm dlx`), it exposes
+`edascr` and `eda-screenshotter` commands.
 
 The command prints per-phase timings while it runs. Authentication is performed
 once per invocation and reused for each requested theme.
@@ -141,7 +144,7 @@ Two independent things control color:
 
 - Tuned for the current EDA UI. In **collapsed** nav mode the rail icons have no
   accessible labels, so Alarms / Transactions / Topologies are clicked by a
-  fixed pixel position (the `RAIL` y-coordinates near the top of `capture.mjs`).
+  fixed pixel position (the `RAIL` y-coordinates near the top of `src/capture.ts`).
   If a future EDA release changes the rail, update those, or just use
   `--nav expanded` (label-based, more robust). Very short viewports (height
   below ~650) can push the lower rail icons off-screen in collapsed mode.

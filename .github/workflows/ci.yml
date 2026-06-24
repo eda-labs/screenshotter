@@ -21,8 +21,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Syntax check
+      - name: Type check
         run: pnpm run check
 
+      - name: Build
+        run: pnpm run build
+
       - name: Show help
-        run: node capture.mjs --help
+        run: node dist/capture.js --help

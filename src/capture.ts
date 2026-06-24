@@ -8,17 +8,26 @@
 //   edascr capture --url https://my-eda --page /ui/app/main/interfaces.eda.nokia.com/v1alpha1/interfaces
 //   edascr capture --url https://my-eda --nav expanded --resolution 1920x1080
 //
-// (or `node capture.mjs ...` / `pnpm capture ...`)
+// (or `node dist/capture.js ...` / `pnpm capture ...`)
 // Requires Node 18+, playwright-core, and a Chrome/Chromium binary.
 import { chromium } from 'playwright-core';
+import type { Browser, BrowserContextOptions, Page } from 'playwright-core';
 import { mkdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
+
+type ArgValue = string | boolean | string[] | undefined;
+type Args = {
+  _: string[];
+  [key: string]: ArgValue;
+};
+type LaunchOptions = NonNullable<Parameters<typeof chromium.launch>[0]>;
+type StorageState = Exclude<BrowserContextOptions['storageState'], string | undefined>;
 
 // ---------------------------------------------------------------------------
 // args
 // ---------------------------------------------------------------------------
-function parseArgs(argv) {
-  const out = { _: [] };
+function parseArgs(argv: string[]): Args {
+  const out: Args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
@@ -31,34 +40,44 @@ function parseArgs(argv) {
   return out;
 }
 
-function normalizeArgv(argv) {
+function normalizeArgv(argv: string[]): string[] {
   const [command, ...rest] = argv;
   if (command === 'capture') return rest;
   if (command === 'help') return ['--help', ...rest];
   return argv;
 }
 
-const args = parseArgs(normalizeArgv(process.argv.slice(2)));
-const num = (v) => (v === undefined ? undefined : Number(v));
+function argString(value: ArgValue): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
 
-const URL    = (args.url || args._[0] || process.env.EDA_URL || '').replace(/\/$/, '');
-const USER   = args.user || process.env.EDA_USER || 'admin';
-const PASS   = args.pass || process.env.EDA_PASS || 'admin';
-const OUT    = resolve(args.out || process.env.EDA_OUT || '.');
-const THEMES = (args.themes || 'dark,light').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
-const SCALE  = num(args.scale) || 2;
-const NAV_EXPANDED = String(args.nav || 'collapsed').toLowerCase().startsWith('exp');
+const args = parseArgs(normalizeArgv(process.argv.slice(2)));
+const num = (v: string | undefined): number | undefined => (v === undefined ? undefined : Number(v));
+
+const URL    = (argString(args.url) || args._[0] || process.env.EDA_URL || '').replace(/\/$/, '');
+const USER   = argString(args.user) || process.env.EDA_USER || 'admin';
+const PASS   = argString(args.pass) || process.env.EDA_PASS || 'admin';
+const OUT    = resolve(argString(args.out) || process.env.EDA_OUT || '.');
+const THEMES = (argString(args.themes) || 'dark,light').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+const SCALE  = num(argString(args.scale)) || 2;
+const NAV_EXPANDED = String(argString(args.nav) || 'collapsed').toLowerCase().startsWith('exp');
 // --page / --path: one or more deep links (full URL or path), comma-separated.
-const CUSTOM = String(args.page || args.path || '').split(',').map((s) => s.trim()).filter(Boolean);
+const CUSTOM = (argString(args.page) || argString(args.path) || '').split(',').map((s) => s.trim()).filter(Boolean);
 
 // resolution / aspect ratio -> viewport (CSS px). Final PNG = viewport * scale.
-let width = num(args.width), height = num(args.height);
-if (args.resolution && typeof args.resolution === 'string') {
-  const [w, h] = args.resolution.toLowerCase().split('x').map(Number);
+let width = num(argString(args.width)), height = num(argString(args.height));
+const resolution = argString(args.resolution);
+const aspect = argString(args.aspect);
+if (resolution) {
+  const [w, h] = resolution.toLowerCase().split('x').map(Number);
   if (w && h) { width = w; height = h; }
-} else if (args.aspect && typeof args.aspect === 'string') {
-  const [aw, ah] = args.aspect.split(':').map(Number);
-  if (aw && ah) { width = width || 1480; height = Math.round((width * ah) / aw); }
+} else if (aspect) {
+  const [aw, ah] = aspect.split(':').map(Number);
+  if (aw && ah) {
+    const aspectWidth = width || 1480;
+    width = aspectWidth;
+    height = Math.round((aspectWidth * ah) / aw);
+  }
 }
 const VIEW = { width: width || 1480, height: height || 920 };
 const WAIT = {
@@ -74,7 +93,7 @@ if (!URL || args.help) {
   console.log(`Usage:
   edascr capture --url <eda-url> [options]
   eda-screenshotter --url <eda-url> [options]
-  node capture.mjs --url <eda-url> [options]
+  node dist/capture.js --url <eda-url> [options]
 
   --url <url>         EDA base URL (also positional, or $EDA_URL)
   --user <name>       login username (default admin)
@@ -94,18 +113,18 @@ if (!URL || args.help) {
 // ---------------------------------------------------------------------------
 // browser: prefer a system Chrome/Chromium, else Playwright-managed Chromium
 // ---------------------------------------------------------------------------
-function launchOptions() {
-  const o = { args: ['--no-sandbox'] };
+function launchOptions(): LaunchOptions {
+  const options: LaunchOptions = { args: ['--no-sandbox'] };
   const candidates = [
     process.env.CHROME_PATH,
     '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
     '/usr/bin/chromium', '/usr/bin/chromium-browser',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  ].filter(Boolean);
+  ].filter((p): p is string => Boolean(p));
   const found = candidates.find((p) => existsSync(p));
-  if (found) o.executablePath = found;
-  return o;
+  if (found) options.executablePath = found;
+  return options;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,17 +146,17 @@ const BUSY_SELECTOR = [
   '.v-progress-circular',
 ].join(',');
 
-const shot = (page, scheme, name) => page.screenshot({ path: `${OUT}/${name}-${scheme}.png` });
+const shot = (page: Page, scheme: string, name: string) => page.screenshot({ path: `${OUT}/${name}-${scheme}.png` });
 
-function schemeFor(theme) {
+function schemeFor(theme: string): 'light' | 'dark' {
   return theme === 'light' ? 'light' : 'dark';
 }
 
-function duration(ms) {
+function duration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
 }
 
-async function timed(label, fn, indent = '  ') {
+async function timed<T>(label: string, fn: () => Promise<T>, indent = '  '): Promise<T> {
   const start = performance.now();
   try {
     return await fn();
@@ -146,24 +165,24 @@ async function timed(label, fn, indent = '  ') {
   }
 }
 
-async function waitForPaint(page) {
-  await page.evaluate(() => new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
+async function waitForPaint(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   })).catch(() => {});
 }
 
-async function waitForDocumentReady(page, timeout = WAIT.app) {
+async function waitForDocumentReady(page: Page, timeout = WAIT.app): Promise<void> {
   await page.waitForFunction(() => document.readyState !== 'loading', undefined, { timeout }).catch(() => {});
 }
 
-async function waitForAssetsReady(page) {
+async function waitForAssetsReady(page: Page): Promise<void> {
   await page.waitForFunction(() => !document.fonts || document.fonts.status === 'loaded', undefined, { timeout: 2000 }).catch(() => {});
   await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete), undefined, { timeout: 2000 }).catch(() => {});
 }
 
-async function waitForBusyGone(page, timeout = WAIT.busy) {
-  await page.waitForFunction((selector) => {
-    const isVisible = (el) => {
+async function waitForBusyGone(page: Page, timeout = WAIT.busy): Promise<void> {
+  await page.waitForFunction((selector: string) => {
+    const isVisible = (el: Element): boolean => {
       const style = getComputedStyle(el);
       const box = el.getBoundingClientRect();
       return style.display !== 'none' &&
@@ -176,23 +195,23 @@ async function waitForBusyGone(page, timeout = WAIT.busy) {
   }, BUSY_SELECTOR, { timeout }).catch(() => {});
 }
 
-async function waitForDomQuiet(page, quietMs = 300, timeout = WAIT.quiet) {
-  await page.waitForFunction(({ quietMs }) => new Promise((resolve) => {
+async function waitForDomQuiet(page: Page, quietMs = 300, timeout = WAIT.quiet): Promise<void> {
+  await page.waitForFunction(({ quietMs }: { quietMs: number }) => new Promise<boolean>((resolve) => {
     const target = document.body;
     if (!target) {
       resolve(true);
       return;
     }
 
-    let timer;
-    let observer;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let observer: MutationObserver | undefined;
     const done = () => {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       observer?.disconnect();
       resolve(true);
     };
     const reset = () => {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       timer = setTimeout(done, quietMs);
     };
 
@@ -202,7 +221,7 @@ async function waitForDomQuiet(page, quietMs = 300, timeout = WAIT.quiet) {
   }), { quietMs }, { timeout }).catch(() => {});
 }
 
-async function settlePage(page, timeout = WAIT.page) {
+async function settlePage(page: Page, timeout = WAIT.page): Promise<void> {
   await waitForDocumentReady(page, timeout);
   await waitForBusyGone(page, Math.min(timeout, WAIT.busy));
   await waitForDomQuiet(page, 300, Math.min(timeout, WAIT.quiet));
@@ -210,25 +229,37 @@ async function settlePage(page, timeout = WAIT.page) {
   await waitForPaint(page);
 }
 
-async function waitForAppReady(page) {
+async function waitForAppShellReady(page: Page, timeout = WAIT.app): Promise<void> {
+  await page.waitForFunction(() => {
+    const text = (document.body?.innerText || '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim();
+    if (!text || text === 'Loading...' || text.endsWith(' Loading...')) return false;
+    return text.includes('Event Driven Automation') && text.includes('All Namespaces') && text.includes('Home');
+  }, undefined, { timeout }).catch((e: unknown) => {
+    throw new Error(`EDA app shell did not become ready within ${timeout}ms: ${String(e).split('\n')[0]}`);
+  });
+}
+
+async function waitForAppReady(page: Page): Promise<void> {
   await waitForDocumentReady(page, WAIT.app);
   const loginVisible = await page.locator('#username, #kc-login').first().isVisible().catch(() => false);
   if (loginVisible) throw new Error('Authenticated session was not accepted; login form is still visible');
+  await waitForAppShellReady(page, WAIT.app);
   await settlePage(page, WAIT.app);
 }
 
-async function newCaptureContext(browser, theme, storageState) {
-  return browser.newContext({
+async function newCaptureContext(browser: Browser, theme: string, storageState?: StorageState) {
+  const options: BrowserContextOptions = {
     viewport: VIEW,
     deviceScaleFactor: SCALE,
     ignoreHTTPSErrors: true,
     colorScheme: schemeFor(theme),
     httpCredentials: { username: USER, password: PASS },
-    ...(storageState ? { storageState } : {}),
-  });
+  };
+  if (storageState) options.storageState = storageState;
+  return browser.newContext(options);
 }
 
-function slug(u) {
+function slug(u: string): string {
   try {
     const segs = new globalThis.URL(u).pathname.split('/').filter(Boolean);
     const last = segs[segs.length - 1] || 'page';
@@ -236,7 +267,7 @@ function slug(u) {
   } catch { return 'page'; }
 }
 
-async function login(page, theme, { captureLogin = false } = {}) {
+async function login(page: Page, theme: string, { captureLogin = false }: { captureLogin?: boolean } = {}): Promise<void> {
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
 
   const username = page.locator('#username');
@@ -252,7 +283,7 @@ async function login(page, theme, { captureLogin = false } = {}) {
   await waitForAppReady(page);
 }
 
-async function authenticate(browser, theme) {
+async function authenticate(browser: Browser, theme: string): Promise<StorageState> {
   const ctx = await newCaptureContext(browser, theme);
   const page = await ctx.newPage();
   try {
@@ -263,7 +294,7 @@ async function authenticate(browser, theme) {
   }
 }
 
-async function captureLoginPage(browser, theme) {
+async function captureLoginPage(browser: Browser, theme: string): Promise<void> {
   const ctx = await newCaptureContext(browser, theme);
   const page = await ctx.newPage();
   try {
@@ -277,7 +308,7 @@ async function captureLoginPage(browser, theme) {
 }
 
 // EDA defaults to Dark and does not persist the choice, so set it every run.
-async function setAppTheme(page, theme) {
+async function setAppTheme(page: Page, theme: string): Promise<void> {
   await page.mouse.click(VIEW.width - 30, 24);
   await page.getByText('Appearance Theme', { exact: true }).first().click({ timeout: WAIT.action });
   await page.getByText(theme === 'light' ? 'Light' : 'Dark', { exact: true }).first().click({ timeout: WAIT.action });
@@ -286,7 +317,7 @@ async function setAppTheme(page, theme) {
 }
 
 // Pin / unpin the left nav via the top-left hamburger. Default state is collapsed.
-async function setNav(page) {
+async function setNav(page: Page): Promise<void> {
   const visible = await page.getByText('Alarms', { exact: true }).first().isVisible().catch(() => false);
   if (NAV_EXPANDED !== visible) {        // toggle only if the current state is wrong
     await page.mouse.click(42, 25);
@@ -295,7 +326,7 @@ async function setNav(page) {
 }
 
 // Navigate to a top-level nav item: by label when expanded, by position when collapsed.
-async function nav(page, label, y) {
+async function nav(page: Page, label: string, y: number): Promise<void> {
   if (NAV_EXPANDED) {
     await page.getByText(label, { exact: true }).first().click({ timeout: WAIT.action });
   } else {
@@ -305,12 +336,12 @@ async function nav(page, label, y) {
   await settlePage(page, WAIT.page);
 }
 
-async function openApp(page) {
+async function openApp(page: Page): Promise<void> {
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
   await waitForAppReady(page);
 }
 
-async function captureBuiltins(page, theme) {
+async function captureBuiltins(page: Page, theme: string): Promise<void> {
   await timed('02-home', async () => {
     await settlePage(page, WAIT.page);
     await shot(page, theme, '02-home');
@@ -343,20 +374,21 @@ async function captureBuiltins(page, theme) {
   }, '    ');
 }
 
-async function captureCustom(page, theme) {
+async function captureCustom(page: Page, theme: string): Promise<void> {
   for (let i = 0; i < CUSTOM.length; i++) {
     const p = CUSTOM[i];
     const full = p.startsWith('http') ? p : URL + (p.startsWith('/') ? p : '/' + p);
     await timed(`${String(i + 1).padStart(2, '0')}-${slug(full)}`, async () => {
       await page.goto(full, { waitUntil: 'domcontentloaded' });
       await page.mouse.move(VIEW.width / 2, VIEW.height / 2);
+      await waitForAppShellReady(page, WAIT.page);
       await settlePage(page, WAIT.page);
       await shot(page, theme, `${String(i + 1).padStart(2, '0')}-${slug(full)}`);
     }, '    ');
   }
 }
 
-async function captureTheme(browser, theme, storageState) {
+async function captureTheme(browser: Browser, theme: string, storageState: StorageState): Promise<void> {
   const ctx = await newCaptureContext(browser, theme, storageState);
   const page = await ctx.newPage();
   const start = performance.now();
