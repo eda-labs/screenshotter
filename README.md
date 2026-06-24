@@ -39,28 +39,40 @@ Chrome (`google-chrome`, `chromium`, the macOS/Windows install paths, or
 pnpm run install-browser   # downloads a Chromium for playwright-core
 ```
 
+### Global registration
+
+From a local clone, register the command globally:
+
+```bash
+pnpm link --global
+edascr capture --url https://my-eda.example.ts.net
+```
+
+If pnpm has not configured a global binary directory yet, run `pnpm setup`
+first and restart your shell.
+
 ## Usage
 
 ```bash
 # simplest — URL only, both themes, output to the current directory
-pnpm capture --url https://my-eda.example.ts.net
+edascr capture --url https://my-eda.example.ts.net
 
 # custom credentials and output directory
-pnpm capture --url https://my-eda --user admin --pass secret --out ./shots
+edascr capture --url https://my-eda --user admin --pass secret --out ./shots
 
 # capture one specific page, nav expanded, at 1080p, dark only
-pnpm capture --url https://my-eda \
+edascr capture --url https://my-eda \
   --page /ui/app/main/interfaces.eda.nokia.com/v1alpha1/interfaces \
   --nav expanded --resolution 1920x1080 --themes dark
 
 # several specific pages at a 16:9 ratio
-pnpm capture --url https://my-eda --aspect 16:9 \
+edascr capture --url https://my-eda --aspect 16:9 \
   --page /ui/app/main/interfaces.eda.nokia.com/v1alpha1/interfaces,/ui/app/main/core.eda.nokia.com/v1/toponodes
 ```
 
 In a clone you can equivalently run `node capture.mjs ...`. Installed as a
 package (`pnpm add -g @eda-labs/screenshotter`, or via `npx`/`pnpm dlx`), it
-exposes an `eda-screenshotter` command.
+exposes `edascr` and `eda-screenshotter` commands.
 
 ### Options
 

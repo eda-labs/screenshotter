@@ -4,9 +4,9 @@
 // Logs in through Keycloak, then captures pages in the chosen theme(s).
 // See README.md for full usage.
 //
-//   eda-screenshotter --url https://my-eda.example.ts.net
-//   eda-screenshotter --url https://my-eda --page /ui/app/main/interfaces.eda.nokia.com/v1alpha1/interfaces
-//   eda-screenshotter --url https://my-eda --nav expanded --resolution 1920x1080
+//   edascr capture --url https://my-eda.example.ts.net
+//   edascr capture --url https://my-eda --page /ui/app/main/interfaces.eda.nokia.com/v1alpha1/interfaces
+//   edascr capture --url https://my-eda --nav expanded --resolution 1920x1080
 //
 // (or `node capture.mjs ...` / `pnpm capture ...`)
 // Requires Node 18+, playwright-core, and a Chrome/Chromium binary.
@@ -30,7 +30,15 @@ function parseArgs(argv) {
   }
   return out;
 }
-const args = parseArgs(process.argv.slice(2));
+
+function normalizeArgv(argv) {
+  const [command, ...rest] = argv;
+  if (command === 'capture') return rest;
+  if (command === 'help') return ['--help', ...rest];
+  return argv;
+}
+
+const args = parseArgs(normalizeArgv(process.argv.slice(2)));
 const num = (v) => (v === undefined ? undefined : Number(v));
 
 const URL    = (args.url || args._[0] || process.env.EDA_URL || '').replace(/\/$/, '');
@@ -55,7 +63,10 @@ if (args.resolution && typeof args.resolution === 'string') {
 const VIEW = { width: width || 1480, height: height || 920 };
 
 if (!URL || args.help) {
-  console.log(`Usage: node capture.mjs --url <eda-url> [options]
+  console.log(`Usage:
+  edascr capture --url <eda-url> [options]
+  eda-screenshotter --url <eda-url> [options]
+  node capture.mjs --url <eda-url> [options]
 
   --url <url>         EDA base URL (also positional, or $EDA_URL)
   --user <name>       login username (default admin)
