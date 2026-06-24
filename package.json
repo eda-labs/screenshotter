@@ -1,0 +1,47 @@
+{
+  "name": "@eda-labs/screenshotter",
+  "version": "0.1.0",
+  "description": "Capture themed (dark/light) screenshots of the Nokia EDA (Event Driven Automation) web UI.",
+  "type": "module",
+  "bin": {
+    "eda-screenshotter": "./capture.mjs"
+  },
+  "main": "capture.mjs",
+  "files": [
+    "capture.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "capture": "node capture.mjs",
+    "start": "node capture.mjs",
+    "help": "node capture.mjs --help",
+    "check": "node --check capture.mjs",
+    "install-browser": "playwright-core install chromium"
+  },
+  "keywords": [
+    "eda",
+    "nokia",
+    "event-driven-automation",
+    "screenshot",
+    "playwright",
+    "srlinux"
+  ],
+  "license": "Apache-2.0",
+  "author": "eda-labs contributors",
+  "homepage": "https://github.com/eda-labs/screenshotter#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eda-labs/screenshotter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eda-labs/screenshotter/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@11.3.0",
+  "dependencies": {
+    "playwright-core": "^1.60.0"
+  }
+}

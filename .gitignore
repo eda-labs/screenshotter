@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# captured screenshots (output)
+*.png
+/out/
+/shots/
+/screenshots/
+
+# logs / misc
+*.log
+.DS_Store
+
+# editors
+.vscode/
+.idea/
