@@ -74,6 +74,9 @@ In a clone you can equivalently run `node capture.mjs ...`. Installed as a
 package (`pnpm add -g @eda-labs/screenshotter`, or via `npx`/`pnpm dlx`), it
 exposes `edascr` and `eda-screenshotter` commands.
 
+The command prints per-phase timings while it runs. Authentication is performed
+once per invocation and reused for each requested theme.
+
 ### Options
 
 | Flag           | Env        | Default     | Description                                              |

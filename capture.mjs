@@ -61,6 +61,14 @@ if (args.resolution && typeof args.resolution === 'string') {
   if (aw && ah) { width = width || 1480; height = Math.round((width * ah) / aw); }
 }
 const VIEW = { width: width || 1480, height: height || 920 };
+const WAIT = {
+  action: 15000,
+  app: 30000,
+  busy: 5000,
+  login: 30000,
+  page: 30000,
+  quiet: 5000,
+};
 
 if (!URL || args.help) {
   console.log(`Usage:
@@ -105,8 +113,120 @@ function launchOptions() {
 // ---------------------------------------------------------------------------
 // Collapsed-rail y-centers (CSS px) for items reached by position.
 const RAIL = { home: 241, alarms: 289, transactions: 433, topologies: 625 };
+const BUSY_SELECTOR = [
+  '[aria-busy="true"]',
+  '[class*="busy" i]',
+  '[class*="loading" i]',
+  '[class*="skeleton" i]',
+  '[class*="spinner" i]',
+  '.ant-spin-spinning',
+  '.mat-mdc-progress-spinner',
+  '.MuiCircularProgress-root',
+  '.pf-c-spinner',
+  '.pf-v5-c-spinner',
+  '.v-progress-circular',
+].join(',');
 
 const shot = (page, scheme, name) => page.screenshot({ path: `${OUT}/${name}-${scheme}.png` });
+
+function schemeFor(theme) {
+  return theme === 'light' ? 'light' : 'dark';
+}
+
+function duration(ms) {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+}
+
+async function timed(label, fn, indent = '  ') {
+  const start = performance.now();
+  try {
+    return await fn();
+  } finally {
+    console.log(`${indent}${label}: ${duration(performance.now() - start)}`);
+  }
+}
+
+async function waitForPaint(page) {
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  })).catch(() => {});
+}
+
+async function waitForDocumentReady(page, timeout = WAIT.app) {
+  await page.waitForFunction(() => document.readyState !== 'loading', undefined, { timeout }).catch(() => {});
+}
+
+async function waitForAssetsReady(page) {
+  await page.waitForFunction(() => !document.fonts || document.fonts.status === 'loaded', undefined, { timeout: 2000 }).catch(() => {});
+  await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete), undefined, { timeout: 2000 }).catch(() => {});
+}
+
+async function waitForBusyGone(page, timeout = WAIT.busy) {
+  await page.waitForFunction((selector) => {
+    const isVisible = (el) => {
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      return style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        Number(style.opacity) > 0.01 &&
+        box.width > 2 &&
+        box.height > 2;
+    };
+    return !Array.from(document.querySelectorAll(selector)).some(isVisible);
+  }, BUSY_SELECTOR, { timeout }).catch(() => {});
+}
+
+async function waitForDomQuiet(page, quietMs = 300, timeout = WAIT.quiet) {
+  await page.waitForFunction(({ quietMs }) => new Promise((resolve) => {
+    const target = document.body;
+    if (!target) {
+      resolve(true);
+      return;
+    }
+
+    let timer;
+    let observer;
+    const done = () => {
+      clearTimeout(timer);
+      observer?.disconnect();
+      resolve(true);
+    };
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(done, quietMs);
+    };
+
+    observer = new MutationObserver(reset);
+    observer.observe(target, { attributes: true, childList: true, characterData: true, subtree: true });
+    reset();
+  }), { quietMs }, { timeout }).catch(() => {});
+}
+
+async function settlePage(page, timeout = WAIT.page) {
+  await waitForDocumentReady(page, timeout);
+  await waitForBusyGone(page, Math.min(timeout, WAIT.busy));
+  await waitForDomQuiet(page, 300, Math.min(timeout, WAIT.quiet));
+  await waitForAssetsReady(page);
+  await waitForPaint(page);
+}
+
+async function waitForAppReady(page) {
+  await waitForDocumentReady(page, WAIT.app);
+  const loginVisible = await page.locator('#username, #kc-login').first().isVisible().catch(() => false);
+  if (loginVisible) throw new Error('Authenticated session was not accepted; login form is still visible');
+  await settlePage(page, WAIT.app);
+}
+
+async function newCaptureContext(browser, theme, storageState) {
+  return browser.newContext({
+    viewport: VIEW,
+    deviceScaleFactor: SCALE,
+    ignoreHTTPSErrors: true,
+    colorScheme: schemeFor(theme),
+    httpCredentials: { username: USER, password: PASS },
+    ...(storageState ? { storageState } : {}),
+  });
+}
 
 function slug(u) {
   try {
@@ -116,27 +236,53 @@ function slug(u) {
   } catch { return 'page'; }
 }
 
-async function login(page, theme) {
-  await page.goto(URL, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1500);
-  if (!CUSTOM.length) await shot(page, theme, '01-login'); // Keycloak login page
-  await page.fill('#username', USER);
-  await page.fill('#password', PASS);
-  await page.click('#kc-login');
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(4000);
+async function login(page, theme, { captureLogin = false } = {}) {
+  await page.goto(URL, { waitUntil: 'domcontentloaded' });
+
+  const username = page.locator('#username');
+  await username.waitFor({ state: 'visible', timeout: WAIT.login });
+  await settlePage(page, WAIT.login);
+
+  if (captureLogin) await shot(page, theme, '01-login'); // Keycloak login page
+
+  await username.fill(USER);
+  await page.locator('#password').fill(PASS);
+  await page.locator('#kc-login').click();
+  await page.locator('#username, #kc-login').first().waitFor({ state: 'hidden', timeout: WAIT.login }).catch(() => {});
+  await waitForAppReady(page);
+}
+
+async function authenticate(browser, theme) {
+  const ctx = await newCaptureContext(browser, theme);
+  const page = await ctx.newPage();
+  try {
+    await login(page, theme, { captureLogin: !CUSTOM.length });
+    return await ctx.storageState();
+  } finally {
+    await ctx.close();
+  }
+}
+
+async function captureLoginPage(browser, theme) {
+  const ctx = await newCaptureContext(browser, theme);
+  const page = await ctx.newPage();
+  try {
+    await page.goto(URL, { waitUntil: 'domcontentloaded' });
+    await page.locator('#username').waitFor({ state: 'visible', timeout: WAIT.login });
+    await settlePage(page, WAIT.login);
+    await shot(page, theme, '01-login');
+  } finally {
+    await ctx.close();
+  }
 }
 
 // EDA defaults to Dark and does not persist the choice, so set it every run.
 async function setAppTheme(page, theme) {
   await page.mouse.click(VIEW.width - 30, 24);
-  await page.waitForTimeout(800);
-  await page.getByText('Appearance Theme', { exact: true }).first().click();
-  await page.waitForTimeout(800);
-  await page.getByText(theme === 'light' ? 'Light' : 'Dark', { exact: true }).first().click();
-  await page.waitForTimeout(1200);
+  await page.getByText('Appearance Theme', { exact: true }).first().click({ timeout: WAIT.action });
+  await page.getByText(theme === 'light' ? 'Light' : 'Dark', { exact: true }).first().click({ timeout: WAIT.action });
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(800);
+  await settlePage(page, WAIT.action);
 }
 
 // Pin / unpin the left nav via the top-left hamburger. Default state is collapsed.
@@ -144,65 +290,84 @@ async function setNav(page) {
   const visible = await page.getByText('Alarms', { exact: true }).first().isVisible().catch(() => false);
   if (NAV_EXPANDED !== visible) {        // toggle only if the current state is wrong
     await page.mouse.click(42, 25);
-    await page.waitForTimeout(1000);
+    await settlePage(page, WAIT.action);
   }
 }
 
 // Navigate to a top-level nav item: by label when expanded, by position when collapsed.
 async function nav(page, label, y) {
   if (NAV_EXPANDED) {
-    await page.getByText(label, { exact: true }).first().click({ timeout: 8000 });
-    await page.waitForTimeout(3000);
+    await page.getByText(label, { exact: true }).first().click({ timeout: WAIT.action });
   } else {
     await page.mouse.click(20, y);
-    await page.waitForTimeout(3000);
     await page.mouse.move(VIEW.width / 2, VIEW.height / 2); // let the hover-drawer collapse
-    await page.waitForTimeout(400);
   }
+  await settlePage(page, WAIT.page);
+}
+
+async function openApp(page) {
+  await page.goto(URL, { waitUntil: 'domcontentloaded' });
+  await waitForAppReady(page);
 }
 
 async function captureBuiltins(page, theme) {
-  await shot(page, theme, '02-home');
+  await timed('02-home', async () => {
+    await settlePage(page, WAIT.page);
+    await shot(page, theme, '02-home');
+  }, '    ');
+
   // Nodes — via the "View" link on the Home Nodes card
-  await page.getByText('View', { exact: true }).first().click({ timeout: 8000 });
-  await page.waitForTimeout(4000);
-  await page.mouse.move(VIEW.width / 2, VIEW.height / 2); await page.waitForTimeout(400);
-  await shot(page, theme, '03-nodes');
+  await timed('03-nodes', async () => {
+    await page.getByText('View', { exact: true }).first().click({ timeout: WAIT.action });
+    await page.mouse.move(VIEW.width / 2, VIEW.height / 2);
+    await settlePage(page, WAIT.page);
+    await shot(page, theme, '03-nodes');
+  }, '    ');
 
-  await nav(page, 'Alarms', RAIL.alarms);             await shot(page, theme, '04-alarms');
-  await nav(page, 'Transactions', RAIL.transactions); await shot(page, theme, '05-transactions');
+  await timed('04-alarms', async () => {
+    await nav(page, 'Alarms', RAIL.alarms);
+    await shot(page, theme, '04-alarms');
+  }, '    ');
 
-  await nav(page, 'Topologies', RAIL.topologies);
-  await page.getByText('Physical', { exact: true }).first().dblclick({ timeout: 8000 });
-  await page.waitForTimeout(7000);
-  await shot(page, theme, '06-topology');
+  await timed('05-transactions', async () => {
+    await nav(page, 'Transactions', RAIL.transactions);
+    await shot(page, theme, '05-transactions');
+  }, '    ');
+
+  await timed('06-topology', async () => {
+    await nav(page, 'Topologies', RAIL.topologies);
+    await page.getByText('Physical', { exact: true }).first().dblclick({ timeout: WAIT.action });
+    await page.locator('canvas, svg').first().waitFor({ state: 'visible', timeout: WAIT.page }).catch(() => {});
+    await settlePage(page, WAIT.page);
+    await shot(page, theme, '06-topology');
+  }, '    ');
 }
 
 async function captureCustom(page, theme) {
   for (let i = 0; i < CUSTOM.length; i++) {
     const p = CUSTOM[i];
     const full = p.startsWith('http') ? p : URL + (p.startsWith('/') ? p : '/' + p);
-    await page.goto(full, { waitUntil: 'networkidle' });
-    await page.waitForTimeout(5000); // let tables / graphs settle
-    await page.mouse.move(VIEW.width / 2, VIEW.height / 2); await page.waitForTimeout(400);
-    await shot(page, theme, `${String(i + 1).padStart(2, '0')}-${slug(full)}`);
+    await timed(`${String(i + 1).padStart(2, '0')}-${slug(full)}`, async () => {
+      await page.goto(full, { waitUntil: 'domcontentloaded' });
+      await page.mouse.move(VIEW.width / 2, VIEW.height / 2);
+      await settlePage(page, WAIT.page);
+      await shot(page, theme, `${String(i + 1).padStart(2, '0')}-${slug(full)}`);
+    }, '    ');
   }
 }
 
-async function captureTheme(browser, theme) {
-  const scheme = theme === 'light' ? 'light' : 'dark'; // themes Keycloak login + page bg
-  const ctx = await browser.newContext({
-    viewport: VIEW, deviceScaleFactor: SCALE, ignoreHTTPSErrors: true, colorScheme: scheme,
-    httpCredentials: { username: USER, password: PASS },
-  });
+async function captureTheme(browser, theme, storageState) {
+  const ctx = await newCaptureContext(browser, theme, storageState);
   const page = await ctx.newPage();
+  const start = performance.now();
   try {
-    await login(page, theme);
-    await setAppTheme(page, theme);
-    await setNav(page);
+    console.log(`  ${theme}:`);
+    await timed('open', () => openApp(page), '    ');
+    await timed('theme', () => setAppTheme(page, theme), '    ');
+    await timed('nav', () => setNav(page), '    ');
     if (CUSTOM.length) await captureCustom(page, theme);
     else await captureBuiltins(page, theme);
-    console.log(`  ${theme}: ok`);
+    console.log(`  ${theme}: ok (${duration(performance.now() - start)})`);
   } finally {
     await ctx.close();
   }
@@ -217,10 +382,19 @@ console.log(`EDA ${URL} -> ${OUT}
   (CUSTOM.length ? `\n  pages=${CUSTOM.join(', ')}` : ''));
 const browser = await chromium.launch(launchOptions());
 let failed = 0;
+const started = performance.now();
+const authTheme = THEMES[0] || 'dark';
+const storageState = await timed(`auth ${authTheme}`, () => authenticate(browser, authTheme));
+if (!CUSTOM.length) {
+  for (const theme of THEMES.slice(1)) {
+    try { await timed(`login page ${theme}`, () => captureLoginPage(browser, theme)); }
+    catch (e) { failed++; console.error(`  login page ${theme}: FAILED - ${String(e).split('\n')[0]}`); }
+  }
+}
 for (const theme of THEMES) {
-  try { await captureTheme(browser, theme); }
+  try { await captureTheme(browser, theme, storageState); }
   catch (e) { failed++; console.error(`  ${theme}: FAILED - ${String(e).split('\n')[0]}`); }
 }
 await browser.close();
-console.log(failed ? `Done with ${failed} failed theme(s).` : 'Done.');
+console.log((failed ? `Done with ${failed} failed theme(s).` : 'Done.') + ` Total ${duration(performance.now() - started)}.`);
 process.exit(failed ? 1 : 0);
